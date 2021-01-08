@@ -611,14 +611,25 @@ class OSY(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
     r""" 
     The OSY test problem from [Oszycka1995]. 
     Implementation from https://github.com/msu-coinlab/pymoo/blob/master/pymoo/problems/multi/osy.py
+    
+    This implementation assumes minimization.
     """
     
     dim = 6
     num_constraints = 6
     num_objectives = 2
-    _bounds = [(0.0, 10.0), (0.0, 10.0), (1.0, 5.0), (0.0, 6.0), (1.0, 5.0), (0.0, 10.0)]
-    _ref_point = [-75.0, 70.0]
+    _bounds = [(0.0, 6.0), (0.0, 4.0), (1.0, 5.0), (0.0, 6.0), (1.0, 5.0), (0.0, 10.0)]
+    _ref_point = [-75.0, 75.0]
     
+    def __init__(
+        self,
+        dim: int = 6,
+        num_objectives: int = 2,
+        noise_std: Optional[float] = None,
+        negate: bool = True,
+    ) -> None:
+        super().__init__(noise_std=noise_std, negate=negate)
+        
     def evaluate_true(self, X: Tensor) -> Tensor:
         f1 = - (25 * (X[..., 0] - 2) ** 2 + (X[..., 1] - 2) ** 2 + (X[..., 2] - 1) ** 2 + (X[..., 3] - 4) ** 2 + (
                     X[..., 4] - 1) ** 2)
@@ -626,11 +637,106 @@ class OSY(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
         return torch.stack([f1, f2], dim=-1)
 
     def evaluate_slack_true(self, X: Tensor) -> Tensor:
-        g1 = (X[..., 0] + X[..., 1] - 2.0) / 2.0
-        g2 = (6.0 - X[..., 0] - X[..., 1]) / 6.0
-        g3 = (2.0 - X[..., 1] + X[..., 0]) / 2.0
-        g4 = (2.0 - X[..., 0] + 3.0 * X[..., 1]) / 2.0
-        g5 = (4.0 - (X[..., 2] - 3.0) ** 2 - X[..., 3]) / 4.0
-        g6 = ((X[..., 4] - 3.0) ** 2 + X[..., 5] - 4.0) / 4.0
-        return -torch.stack([g1, g2, g3, g4, g5, g6], dim=-1)
+        g1 = (X[..., 0] + X[..., 1] - 2.0)
+        g2 = (6.0 - X[..., 0] - X[..., 1])
+        g3 = (2.0 - X[..., 1] + X[..., 0])
+        g4 = (2.0 - X[..., 0] + 3.0 * X[..., 1])
+        g5 = (4.0 - (X[..., 2] - 3.0) ** 2 - X[..., 3])
+        g6 = ((X[..., 4] - 3.0) ** 2 + X[..., 5] - 4.0)
+        return torch.stack([g1, g2, g3, g4, g5, g6], dim=-1)
+    
+class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
+    r""" 
+    Ripple problem from :
+    implementation taken via https://github.com/vpicheny/GPGame/blob/master/example/ripple_test.R
+    """
+    dim = 8
+    num_objectives = 5
+    _bounds = [(0.000110815602836879, 0.000221631205673759), 
+               (7.83532027529331e-06, 0.000783532027529331), 
+               (1.29313391262165e-06, 0.000783532027529331), 
+               (1.29313391262165e-06, 6.46566956310825e-05),
+               (1.29313391262165e-06, 6.46566956310825e-05),
+               (1.29313391262165e-06, 6.46566956310825e-05),
+               (1.29313391262165e-06, 6.46566956310825e-05),
+               (1.29313391262165e-06, 6.46566956310825e-05)]
+    _ref_point = [(x[0] + x[1]) / 2 for x in _bounds[:5]]
+    
+    def evaluate_true(self, X: Tensor) -> Tensor:
+        nr = 4
+        Ell = 400
+        Prated = 65000
+        Vdc = 800
+        Rlk = 0.005 * torch.ones(*X.shape[:-1], nr, device=X.device, dtype=X.dtype)
+        omegasw = 32000 * math.pi
+
+        L1 = X[...,0]
+        L2 = X[...,1]
+        L3 = X[...,2]
+        Ck = X[...,3:-1]
+        Cf = X[...,-1]
+        
+        ck_range = torch.arange(1, 5, device=X.device, dtype=X.dtype)
+        for _ in X.shape[:-1]:
+            ck_range = ck_range.unsqueeze(0)
+        ck_range = ck_range.repeat(*X.shape[:-1], 1)
+        
+        Lk = (Ck * (ck_range * omegasw)**2).reciprocal()
+            
+        def glc(s):
+            num = L2 * s * (L3 * Cf * s**2 + 1) + L3 * s
+            denom = Lk * s.unsqueeze(-1) + Rlk + 1./ (Ck * s.unsqueeze(-1))
+            return (num.unsqueeze(-1) / denom).sum(-1)
+        
+        def gfun(s):
+            f1 = L1 * s * glc(s)
+            f2 = L2 * s * (L3 * Cf * s**2 + 1)
+            f3 = L3 * s
+            return 1./(f1 + f2 + f3)
+        
+        def fi(i):
+            one_i = torch.ones(*X.shape[:-1], 2, device=X.device, dtype=X.dtype)
+            one_i[...,0] = 0.
+            sval = torch.view_as_complex(i * omegasw * one_i)
+            gres = gfun(i * omegasw * sval)
+            return 20 * torch.log(gres.real**2 + gres.imag**2)
+                        
+        res1 = [fi(i) for i in range(1, nr+1)]                  
+        res2 = (L1 + L2 + L3).squeeze(-1) + Lk.sum(-1)
+        # return res2
+        
+        if X.ndim == 2:
+            return torch.stack((*res1, res2)).t()
+          
+        return torch.cat((*res1, res2), dim=-1)
+    
+    def evaluate_slack_true(self, X: Tensor) -> Tensor:
+        nr = 4
+        Vdc = 800
+        omega0 = 100 * math.pi
+        omegasw = 32000 * math.pi
+        Iref = 141
+        Rlk = 0.005 * torch.ones(*X.shape[:-1], nr, device=X.device, dtype=X.dtype)
+        Ell = 400
+        Prated = 65000
+        Rb = Ell**2/Prated
+        
+        L1 = X[...,0]
+        L2 = X[...,1]
+        L3 = X[...,2]
+        Ck = X[...,3:-1]
+        Cf = X[...,-1]
+          
+        g1 = Ck.sum(-1) + Cf - 0.05 / (Rb * omega0)
+        g2 = L1 + L2 + L3 - 0.1 * Rb / omega0
+        g31 = 0.2 - 2 * math.pi * Vdc / (8 * L1 * omegasw * Iref)
+        g32 = 2 * math.pi* Vdc / (8 * L1 * omegasw * Iref) - 0.4
+        g4 = L2 + L3 - L1
+        g51 = omegasw/2 - torch.sqrt((L1 + L2 + L3) / (L1 * (L2 + L3) * (Ck.sum(-1) + Cf)))
+        g52 = torch.sqrt((L1 + L2 + L3)/(L1 * (L2 + L3) * (Ck.sum(-1) + Cf))) - 3*omegasw / 4   
+        
+        if X.ndim == 2:
+            return torch.stack((g1, g2, g31, g32, g4, g51, g52)).t()
+        
+        return torch.cat((g1, g2, g31, g32, g4, g51, g52),dim=-1)                         
     
