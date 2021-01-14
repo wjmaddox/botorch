@@ -618,7 +618,7 @@ class OSY(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
     dim = 6
     num_constraints = 6
     num_objectives = 2
-    _bounds = [(0.0, 6.0), (0.0, 4.0), (1.0, 5.0), (0.0, 6.0), (1.0, 5.0), (0.0, 10.0)]
+    _bounds = [(0.0, 10.0), (0.0, 10.0), (1.0, 5.0), (0.0, 6.0), (1.0, 5.0), (0.0, 10.0)]
     _ref_point = [-75.0, 75.0]
     
     def __init__(
@@ -650,20 +650,23 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
     Ripple problem from :
     implementation taken via https://github.com/vpicheny/GPGame/blob/master/example/ripple_test.R
     """
-    dim = 8
-    num_objectives = 5
+    dim = 6
+    num_objectives = dim - 3
     _bounds = [(0.000110815602836879, 0.000221631205673759), 
                (7.83532027529331e-06, 0.000783532027529331), 
                (1.29313391262165e-06, 0.000783532027529331), 
                (1.29313391262165e-06, 6.46566956310825e-05),
                (1.29313391262165e-06, 6.46566956310825e-05),
-               (1.29313391262165e-06, 6.46566956310825e-05),
-               (1.29313391262165e-06, 6.46566956310825e-05),
+               # (1.29313391262165e-06, 6.46566956310825e-05),
+               # (1.29313391262165e-06, 6.46566956310825e-05),
                (1.29313391262165e-06, 6.46566956310825e-05)]
-    _ref_point = [(x[0] + x[1]) / 2 for x in _bounds[:5]]
+    # _ref_point = [(x[0] + x[1]) / 2 for x in _bounds[:5]]
+    # manual tuned points 
+    # _ref_point = [0.00012, 5e-06, 15e-06, 2.2e-06, 2.2e-06, 8.8e-06] 
+    _ref_point = [1.4727e+03,  1.6391e+03, -1.9622e-04]
     
     def evaluate_true(self, X: Tensor) -> Tensor:
-        nr = 4
+        nr = X.shape[-1] - 4
         Ell = 400
         Prated = 65000
         Vdc = 800
@@ -676,7 +679,7 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
         Ck = X[...,3:-1]
         Cf = X[...,-1]
         
-        ck_range = torch.arange(1, 5, device=X.device, dtype=X.dtype)
+        ck_range = torch.arange(1, nr + 1, device=X.device, dtype=X.dtype)
         for _ in X.shape[:-1]:
             ck_range = ck_range.unsqueeze(0)
         ck_range = ck_range.repeat(*X.shape[:-1], 1)
@@ -701,7 +704,8 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
             gres = gfun(i * omegasw * sval)
             return 20 * torch.log(gres.real**2 + gres.imag**2)
                         
-        res1 = [fi(i) for i in range(1, nr+1)]                  
+        res1 = [fi(i) for i in range(1, nr+1)]     
+        print(len(res1))
         res2 = (L1 + L2 + L3).squeeze(-1) + Lk.sum(-1)
         # return res2
         
@@ -729,14 +733,16 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
           
         g1 = Ck.sum(-1) + Cf - 0.05 / (Rb * omega0)
         g2 = L1 + L2 + L3 - 0.1 * Rb / omega0
-        g31 = 0.2 - 2 * math.pi * Vdc / (8 * L1 * omegasw * Iref)
-        g32 = 2 * math.pi* Vdc / (8 * L1 * omegasw * Iref) - 0.4
+#         g31 = 0.2 - 2 * math.pi * Vdc / (8 * L1 * omegasw * Iref)
+#         g32 = 2 * math.pi* Vdc / (8 * L1 * omegasw * Iref) - 0.4
         g4 = L2 + L3 - L1
-        g51 = omegasw/2 - torch.sqrt((L1 + L2 + L3) / (L1 * (L2 + L3) * (Ck.sum(-1) + Cf)))
-        g52 = torch.sqrt((L1 + L2 + L3)/(L1 * (L2 + L3) * (Ck.sum(-1) + Cf))) - 3*omegasw / 4   
+        root_term = (L1 + L2 + L3) / (L1 * (L2 + L3) * (Ck.sum(-1) + Cf))
+        root = root_term.sqrt()
+        g51 = omegasw/2 - root
+        g52 = root - 3*omegasw / 4   
         
         if X.ndim == 2:
-            return torch.stack((g1, g2, g31, g32, g4, g51, g52)).t()
+            return -torch.stack((g2, g4)).t()
         
-        return torch.cat((g1, g2, g31, g32, g4, g51, g52),dim=-1)                         
+        return -torch.cat((g2, g4),dim=-1)                         
     
