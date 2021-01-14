@@ -663,7 +663,7 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
     # _ref_point = [(x[0] + x[1]) / 2 for x in _bounds[:5]]
     # manual tuned points 
     # _ref_point = [0.00012, 5e-06, 15e-06, 2.2e-06, 2.2e-06, 8.8e-06] 
-    _ref_point = [1.4727e+03,  1.6391e+03, -1.9622e-04]
+    _ref_point = [-1.4727e+03,  -1.6391e+03, 1.9622e-04]
     
     def evaluate_true(self, X: Tensor) -> Tensor:
         nr = X.shape[-1] - 4
@@ -705,7 +705,6 @@ class SwitchRipple(MultiObjectiveTestProblem, ConstrainedBaseTestProblem):
             return 20 * torch.log(gres.real**2 + gres.imag**2)
                         
         res1 = [fi(i) for i in range(1, nr+1)]     
-        print(len(res1))
         res2 = (L1 + L2 + L3).squeeze(-1) + Lk.sum(-1)
         # return res2
         
